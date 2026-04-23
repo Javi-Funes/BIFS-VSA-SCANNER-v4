@@ -1,0 +1,112 @@
+# .github/workflows/bifs_scanner.yml
+# ═══════════════════════════════════════════════════════════
+# BIFS VSA Scanner v4 — Ejecución diaria automática
+#
+# ESTRUCTURA DEL REPO:
+#   bifs-scanner/
+#   ├── .github/workflows/bifs_scanner.yml  ← este archivo
+#   ├── bifs_vsa_scanner_v4.py              ← scanner + automation
+#   ├── requirements.txt                     ← dependencias
+#   ├── bifs_scan_history/                   ← historial (auto-generado)
+#   │   ├── scan_20260422_183000.json
+#   │   ├── scan_20260423_183000.json
+#   │   └── ...
+#   └── reports/                             ← HTMLs (auto-generado)
+#       ├── bifs_scan_20260422.html
+#       └── ...
+#
+# SECRETS NECESARIOS (Settings → Secrets → Actions):
+#   - TELEGRAM_BOT_TOKEN
+#   - TELEGRAM_CHAT_ID
+# ═══════════════════════════════════════════════════════════
+
+name: BIFS Daily Scan
+
+on:
+  schedule:
+    # 21:30 UTC = 18:30 Argentina (post-cierre NYSE)
+    # Lunes a Viernes
+    - cron: '30 21 * * 1-5'
+
+  workflow_dispatch:
+    # Botón manual desde la tab Actions
+    inputs:
+      force_alerts:
+        description: 'Enviar alertas aunque no haya cambios'
+        required: false
+        default: 'false'
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Permisos para commitear al repo
+    permissions:
+      contents: write
+
+    steps:
+      # ── 1. Checkout con historial ──
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Historial completo para commits
+
+      # ── 2. Setup Python ──
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # ── 3. Instalar dependencias ──
+      - name: Install dependencies
+        run: |
+          pip install yfinance requests numpy pandas
+          echo "✓ Dependencias instaladas"
+
+      # ── 4. Crear carpetas si no existen ──
+      - name: Prepare directories
+        run: |
+          mkdir -p bifs_scan_history
+          mkdir -p reports
+          echo "✓ Directorios listos"
+
+      # ── 5. Correr el scanner ──
+      - name: Run BIFS Scanner
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_ACTIONS: "true"
+          HISTORY_DIR: "bifs_scan_history"
+        run: |
+          python bifs_vsa_scanner_v4.py
+          echo "✓ Scanner completado"
+
+      # ── 6. Mover HTML a reports/ con fecha ──
+      - name: Archive HTML report
+        run: |
+          DATE=$(date +%Y%m%d)
+          if [ -f bifs_vsa_scanner_v4.html ]; then
+            cp bifs_vsa_scanner_v4.html "reports/bifs_scan_${DATE}.html"
+            echo "✓ Reporte archivado: reports/bifs_scan_${DATE}.html"
+          fi
+          # Mantener solo últimos 30 reportes
+          cd reports && ls -t *.html 2>/dev/null | tail -n +31 | xargs -r rm
+          echo "✓ Cleanup de reportes antiguos"
+
+      # ── 7. Commit historial + reportes al repo ──
+      - name: Commit scan results
+        run: |
+          git config user.name "BIFS Scanner Bot"
+          git config user.email "bifs-bot@github-actions"
+          git add bifs_scan_history/ reports/
+          # Solo commitear si hay cambios
+          if git diff --staged --quiet; then
+            echo "Sin cambios para commitear"
+          else
+            DATE=$(date +%Y-%m-%d)
+            SCAN_COUNT=$(ls bifs_scan_history/scan_*.json 2>/dev/null | wc -l)
+            git commit -m "📊 Scan ${DATE} · ${SCAN_COUNT} scans acumulados"
+            git push
+            echo "✓ Historial commiteado al repo"
+          fi
