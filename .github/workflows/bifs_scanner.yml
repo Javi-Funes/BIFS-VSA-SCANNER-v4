@@ -8,8 +8,8 @@
 #   ├── bifs_vsa_scanner_v4.py              ← scanner + automation
 #   ├── requirements.txt                     ← dependencias
 #   ├── bifs_scan_history/                   ← historial (auto-generado)
-#   │   ├── scan_20260422_183000.json
-#   │   ├── scan_20260423_183000.json
+#   │   ├── scan_20260422_220000.json
+#   │   ├── scan_20260423_220000.json
 #   │   └── ...
 #   └── reports/                             ← HTMLs (auto-generado)
 #       ├── bifs_scan_20260422.html
@@ -24,10 +24,9 @@ name: BIFS Daily Scan
 
 on:
   schedule:
-    # 22:00 UTC = 18:30 Argentina (post-cierre NYSE)
-    # Lunes a Viernes
-    - cron: '00 22 * * 1-5'
-
+    # 22:00 UTC = 19:00 ARG en EDT (verano US) / 18:00 ARG en EST (invierno US)
+    # Siempre post-cierre NYSE en cualquier huso horario
+    - cron: '0 22 * * 1-5'
   workflow_dispatch:
     # Botón manual desde la tab Actions
     inputs:
@@ -40,7 +39,6 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
     # Permisos para commitear al repo
     permissions:
       contents: write
@@ -57,6 +55,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       # ── 3. Instalar dependencias ──
       - name: Install dependencies
@@ -82,10 +81,26 @@ jobs:
           python bifs_vsa_scanner_v4.py
           echo "✓ Scanner completado"
 
-      # ── 6. Mover HTML a reports/ con fecha ──
+      # ── 6. Verificar que el snapshot generado es de hoy ──
+      - name: Verify scan was created
+        run: |
+          LATEST=$(ls -t bifs_scan_history/scan_*.json 2>/dev/null | head -1)
+          if [ -z "$LATEST" ]; then
+            echo "❌ ERROR: No se generó snapshot nuevo"
+            exit 1
+          fi
+          TODAY=$(date -u +%Y%m%d)
+          if [[ "$LATEST" != *"$TODAY"* ]]; then
+            echo "❌ ERROR: Snapshot más reciente no es de hoy ($TODAY)"
+            echo "Latest: $LATEST"
+            exit 1
+          fi
+          echo "✓ Snapshot verificado: $LATEST"
+
+      # ── 7. Mover HTML a reports/ con fecha ──
       - name: Archive HTML report
         run: |
-          DATE=$(date +%Y%m%d)
+          DATE=$(date -u +%Y%m%d)
           if [ -f bifs_vsa_scanner_v4.html ]; then
             cp bifs_vsa_scanner_v4.html "reports/bifs_scan_${DATE}.html"
             echo "✓ Reporte archivado: reports/bifs_scan_${DATE}.html"
@@ -94,7 +109,7 @@ jobs:
           cd reports && ls -t *.html 2>/dev/null | tail -n +31 | xargs -r rm
           echo "✓ Cleanup de reportes antiguos"
 
-      # ── 7. Commit historial + reportes al repo ──
+      # ── 8. Commit historial + reportes al repo ──
       - name: Commit scan results
         run: |
           git config user.name "BIFS Scanner Bot"
@@ -104,7 +119,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "Sin cambios para commitear"
           else
-            DATE=$(date +%Y-%m-%d)
+            DATE=$(date -u +%Y-%m-%d)
             SCAN_COUNT=$(ls bifs_scan_history/scan_*.json 2>/dev/null | wc -l)
             git commit -m "📊 Scan ${DATE} · ${SCAN_COUNT} scans acumulados"
             git push
