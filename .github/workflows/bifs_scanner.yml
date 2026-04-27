@@ -24,9 +24,9 @@ name: BIFS Daily Scan
 
 on:
   schedule:
-    # 21:30 UTC = 18:30 Argentina (post-cierre NYSE)
+    # 22:00 UTC = 18:30 Argentina (post-cierre NYSE)
     # Lunes a Viernes
-    - cron: '30 21 * * 1-5'
+    - cron: '00 22 * * 1-5'
 
   workflow_dispatch:
     # Botón manual desde la tab Actions
